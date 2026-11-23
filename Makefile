@@ -20,7 +20,7 @@ default: full_clean compile link simulate
 compile:
 	@echo Compiling $(TOP_MODULE)....
 	@mkdir -p $(BSVBUILDDIR)
-	@bsc -u -sim -simdir $(BSVBUILDDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR) -keep-fires -p $(BSVINCDIR) -g $(TOP_MODULE)  $(TOP_DIR)/$(TOP_FILE)
+	@bsc -u -sim -no-aggressive-conditions -no-sched-conditions -simdir $(BSVBUILDDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR) -keep-fires -p $(BSVINCDIR) -g $(TOP_MODULE)  $(TOP_DIR)/$(TOP_FILE)
 	@echo Compilation finished
 
 .PHONY: link

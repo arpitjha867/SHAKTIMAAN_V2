@@ -28,7 +28,7 @@ package Soc;
 		Reg#(Bool) rg_start <- mkReg(True);
 
 		Ifc_accelerator#(`ADDR_WIDTH,26,`BUS_WIDTH,32768,16,32768,16,32768,16,16,32,16,16) systolic <- mk_accelerator;
-		
+		Ifc_accelerator systolic <- mk_accelerator;
 		AXI4_Fabric_IFC#(`Num_masters, `Num_slaves, `ADDR_WIDTH, `BUS_WIDTH, 0) fabric <- mkAXI4_Fabric(fn_slave_map);
 
     AXI4_Master_Xactor_IFC#(`ADDR_WIDTH, `BUS_WIDTH, 0) m_xactor <- mkAXI4_Master_Xactor;  

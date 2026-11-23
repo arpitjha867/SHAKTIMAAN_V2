@@ -1,8 +1,4 @@
 *.swp
 build/*
-verilog/*
-common_bsv/*
-fabrics/*
-common_verilog/*
 bin/*
 src/verilog/*

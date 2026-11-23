@@ -1,0 +1,23 @@
+arpit@arpit:~/SIMULATION_SHAKTIMAAN/SHAKTIMAAN$ make generate_verilog > build.log 2>&1
+arpit@arpit:~/SIMULATION_SHAKTIMAAN/SHAKTIMAAN$ grep -n -A 15 -B 5 "Error:" build.log
+1737-    "rl_perform_computation" cannot fire before "mav_put_result":
+1738-      calls to rg_output_addr.write vs. rg_output_addr.read
+1739-Verilog file created: verilog//mktensoralu.v
+1740-Elaborated module file created: ./build//mktensoralu.ba
+1741-code generation for mkshaktimaan starts
+1742:Internal Bluespec Compiler Error:
+1743-Please report this failure to the BSC developers, by opening a ticket
+1744-in the issue database: https://github.com/B-Lang-org/bsc/issues
+1745-The following internal error message should be included in your
+1746-correspondence along with any other relevant details:
+1747-Bluespec Compiler, version 2026.07.1 (build 63665af1)
+1748-APath.aPaths': nodes not in graph: [Argument 3 port 1 of method `master_m_bvalid' of submodule `inst1_ld_module',
+1749- Argument 5 port 1 of method `master_m_rvalid' of submodule `inst1_ld_module',
+1750- Argument 3 port 1 of method `master_m_bvalid' of submodule `inst1_st_module',
+1751- Argument 5 port 1 of method `master_m_rvalid' of submodule `inst1_st_module',
+1752- Argument 3 port 1 of method `master_m_bvalid' of submodule `inst1_fetch_decode',
+1753- Argument 5 port 1 of method `master_m_rvalid' of submodule `inst1_fetch_decode',
+1754- Argument 4 port 1 of method `slave_m_awvalid' of submodule `inst1_fetch_decode',
+1755- Argument 4 port 1 of method `slave_m_arvalid' of submodule `inst1_fetch_decode']
+1756-
+1757-pathnodes = [Definition `inst1_ff_req_in_tensor_alu_first__464_BITS_7_T_ETC___d1489',
