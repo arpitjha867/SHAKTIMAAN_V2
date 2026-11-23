@@ -46,6 +46,27 @@ simulate:
 	./bin/out 
 	@echo Simulation finished. 
 
+SOC_BUILD:=./build_soc
+BSC_LIBS:=.:%/Libraries
+SOC_INC:=.:%/Libraries:$(SOC_BUILD):$(subst ./src/:,,$(FILES))
+SOC_ARGS?=
+
+# SoC testbench (Bluesim): accelerator + AXI fabric + BRAM. code.mem is read from $(SOC_BUILD).
+.PHONY: soc_compile soc_link soc_mem soc_run
+soc_compile: soc_mem
+	@rm -f $(SOC_BUILD)/Soc.bo $(SOC_BUILD)/mkTbSoc.ba
+	@bsc -u -sim -no-aggressive-conditions -no-sched-conditions -simdir $(SOC_BUILD) -bdir $(SOC_BUILD) -info-dir $(SOC_BUILD) -p $(SOC_INC) -g mkTbSoc $(TOP_DIR)/Soc.bsv
+
+soc_link: soc_compile
+	@bsc -e mkTbSoc -sim -o $(SOC_BUILD)/tbsoc -simdir $(SOC_BUILD) -bdir $(SOC_BUILD) -p $(BSC_LIBS)
+
+soc_mem:
+	@mkdir -p $(SOC_BUILD)
+	python3 software/gen_code_mem.py --out $(SOC_BUILD)/code.mem $(SOC_ARGS)
+
+soc_run: soc_link
+	cd $(SOC_BUILD) && ./tbsoc -m 250000 | tee run.log | grep -v "Decoding\|Received data\|Sending params"
+
 .PHONY: vivado_build
 vivado_build: 
 	@vivado -mode tcl -source $(HOMEDIR)/src/tcl/create_project.tcl -tclargs $(TOP_MODULE) $(FPGA) || (echo "Could \

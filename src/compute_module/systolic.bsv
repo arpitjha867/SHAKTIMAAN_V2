@@ -100,6 +100,13 @@ package systolic;
         end
       end
 
+      // Last column has no east neighbour: discard the forwarded input.
+      for(Integer i = 0; i < vnRow; i=i+1) begin
+        rule rl_sink_east_input;
+          let x <- intArray[i][vnCol-1].subifc_get_inp.get();
+        endrule
+      end
+
       Vector#(nRow, Ifc_row_connections#(in_width)) vec_row_ifc;
       Vector#(nCol, Ifc_col_connections#(in_width,out_width)) vec_col_ifc;
 

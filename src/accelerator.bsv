@@ -122,7 +122,7 @@ package accelerator;
 
 		//Reg#(Bit#(8)) statusReg = concatReg8(1'b0,1'b0,1'b0,1'b0,rg_store_error, rg_frontend_error, rg_load_error, rg_idle);
 
-		Vector#(`NUMCOLS, Reg#(Bool)) rg_inp_req_valid <- replicateM(mkDReg(False));
+
 
     let fetch_decode <- mkfetchdecode;
     let dependency_module <- mkdepend_resolver;
@@ -237,29 +237,30 @@ package accelerator;
 		//	end
 		//endrule
 
+		// Row inputs (zero padding or ibuf data) are returned in request order; nothing is dropped under back-pressure.
+		Vector#(`NUMROWS, FIFOF#(Bool)) ff_inp_is_zero <- replicateM(mkSizedFIFOF(4));
+
 		for(Integer i=0; i<vnRow; i=i+1)begin
 			rule rl_recv_read_req_ibuf_from_gemm;
 				let req <- gemm_module.get_inp_addr[i].get();
-				if(req.pad_zero && req.valid)begin
-					rg_inp_req_valid[i] <= True;
+				if(req.pad_zero)begin
+					ff_inp_is_zero[i].enq(True);
 				end
-				else if(req.valid)begin
-					buffers.ibuf[i].portB.request.put(makeRequest(False, req.index, ?)); //TOCHECK
+				else begin
+					buffers.ibuf[i].portB.request.put(makeRequest(False, req.index, ?));
+					ff_inp_is_zero[i].enq(False);
 				end
-				//else begin
-				//	gemm_module.put_inp_resp[i].put(0); //This should fix partial row input problem if top half of systolic is properly used
-				//end
 			endrule
-		end
 
-		for(Integer i=0; i<vnRow; i=i+1)begin
-			rule rl_send_read_resp_zero_to_gemm(rg_inp_req_valid[i]);
+			rule rl_send_read_resp_zero_to_gemm(ff_inp_is_zero[i].first);
 				gemm_module.put_inp_resp[i].put(0);
+				ff_inp_is_zero[i].deq();
 			endrule
-		
-			rule rl_send_read_resp_ibuf_to_gemm(!rg_inp_req_valid[i]);
+
+			rule rl_send_read_resp_ibuf_to_gemm(!ff_inp_is_zero[i].first);
 				let value <- buffers.ibuf[i].portB.response.get();
 				gemm_module.put_inp_resp[i].put(value);
+				ff_inp_is_zero[i].deq();
 			endrule
 		end
 
@@ -319,13 +320,13 @@ package accelerator;
          			ff_out_which_buffer[i].enq(which_buffer);
          		endrule
 
-			rule rl_forward_old_output_from_obuf1_to_gemm(ff_out_which_buffer[i].first);
+			rule rl_forward_old_output_from_obuf1_to_gemm(!ff_out_which_buffer[i].first);
 				let value <- buffers.obuf1[i].portA.response.get();
 				gemm_module.put_old_out_resp[i].put(value);
 				ff_out_which_buffer[i].deq();
 			endrule
 
-			rule rl_forward_old_output_from_obuf2_to_gemm(!ff_out_which_buffer[i].first);
+			rule rl_forward_old_output_from_obuf2_to_gemm(ff_out_which_buffer[i].first);
 				let value <- buffers.obuf2[i].portA.response.get();
 				gemm_module.put_old_out_resp[i].put(value);
 				ff_out_which_buffer[i].deq();

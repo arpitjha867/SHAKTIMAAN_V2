@@ -89,20 +89,19 @@ package compute_top;
     Reg#(Dim1) rg_row_cntr <- mkReg(0);
     Reg#(Dim1) rg_h_cntr <- mkReg(0);
     Reg#(Dim1) rg_w_cntr <- mkReg(0);
-    Reg#(Dim1) rg_zero_cntr <- mkReg(0);
+    Vector#(nCol, Reg#(Dim1)) rg_zero_cntr <- replicateM(mkReg(0));
 
     Reg#(Dim1) rg_wt_cntr <- mkReg(0);
 
     Wire#(SRAM_index#(wt_index)) wr_wt_req <- mkWire();
-    Wire#(Bool) init_acc_count_fire <- mkWire();
+    PulseWire pw_last_col_out <- mkPulseWire();
 
-    Vector#(nRow, Reg#(SRAMKRdReq#(if_index))) rg_inp_addr <- replicateM(mkReg(?));
-    Vector#(nRow, Wire#(SRAMKRdReq#(if_index))) wr_inp_addr <- replicateM(mkWire());
+    // Elastic request queues: the generator stalls instead of dropping requests when a consumer is slow.
+    Vector#(nRow, FIFOF#(SRAMKRdReq#(if_index))) ff_inp_req <- replicateM(mkFIFOF());
 		Vector#(nRow, Reg#(Bool)) rg_valid_row <- replicateM(mkReg(False));
 
 		Reg#(Bit#(of_index)) rg_old_out_addr <- mkReg(?);
-    Vector#(nCol, Reg#(SRAMKRdReq#(of_index))) rg_old_out_req <- replicateM(mkReg(?));
-		Vector#(nCol, Wire#(SRAMKRdReq#(of_index))) wr_old_out_req <- replicateM(mkWire());
+    Vector#(nCol, FIFOF#(SRAMKRdReq#(of_index))) ff_old_req <- replicateM(mkFIFOF());
 
 		Reg#(Dim1) rg_new_out_cntr <- mkReg(0);
 
@@ -122,41 +121,34 @@ package compute_top;
     endrule
 
     for(Integer i=0; i<cols; i=i+1)begin
+      // Per-column counter: every column gets exactly one zero (or old output) per pixel.
       rule rl_send_init_acc_zero(rg_params matches tagged Valid .params &&&
-                                   !rg_weightload &&&
-                                   rg_zero_cntr > 0 &&&
-                                   !params.preload_output &&& rg_valid_col[i]);
-            systolic.subifc_cols[i].subifc_put_acc.put(0);
-	    if(fromInteger(i) == 0)
-	    begin
-	      init_acc_count_fire <= True;
-	    end
+                                 !rg_weightload &&& rg_zero_cntr[i] > 0);
+        systolic.subifc_cols[i].subifc_put_acc.put(0);
+        rg_zero_cntr[i] <= rg_zero_cntr[i] - 1;
+      endrule
+
+      // Inactive columns still receive forwarded inputs, so they must keep flowing and be drained.
+      rule rl_drain_inactive_col(!rg_valid_col[i]);
+        let v <- systolic.subifc_cols[i].subifc_get_acc.get();
       endrule
     end
 
-    rule rl_init_acc_zero_counter(init_acc_count_fire);
-			rg_zero_cntr <= rg_zero_cntr - 1;
+    // Counting in a separate rule keeps the per-column output methods from conflicting on rg_new_out_cntr.
+    rule rl_dec_new_out_cntr(pw_last_col_out);
+      rg_new_out_cntr <= rg_new_out_cntr - 1;
     endrule
 
-		rule rl_generate_inp_addr(rg_params matches tagged Valid .params &&& 
-															!rg_weightload &&& // compute phase
-															(//rg_inp_traingle_cntr > 1 || //Final triangle while feeding inputs
-															//rg_op_traingle_cntr > 1 || //Final triangle while feeding outputs, uncomment this when aspect ratio of systolic could be different
-															rg_row_cntr > 0)); //Letting the bottom half of systolic to get enough input zeros/values for the output to get down
+    rule rl_generate_inp_addr(rg_params matches tagged Valid .params &&&
+                              !rg_weightload &&& rg_inp_triangle);
 
       Bool lv_pad_zero = (rg_h_cntr < zeroExtend(params.pad_top)) || (rg_w_cntr < zeroExtend(params.pad_left)) 
                           || (params.ofmap_height - rg_h_cntr - 1 < zeroExtend(params.pad_bottom))
                           || (params.ofmap_width - rg_w_cntr - 1 < zeroExtend(params.pad_right));
 
-      //Bool is_triangle = (pack(rg_inp_traingle_cntr) == params.active_rows);
-      //Bool is_old_output_triangle = (pack(rg_op_traingle_cntr) == params.active_cols);
-      
       if(rg_h_cntr == params.ofmap_height-1 && rg_w_cntr == params.ofmap_width-1)begin
-        //rg_inp_traingle_cntr <= (rg_inp_traingle_cntr == 1)?1:rg_inp_traingle_cntr - 1;
-	rg_inp_triangle <= False;
-	rg_op_triangle <= False;
-        //rg_op_traingle_cntr <= (rg_op_traingle_cntr == 1)?1:rg_op_traingle_cntr - 1;
-        rg_row_cntr <= (rg_row_cntr == 0)?0:rg_row_cntr - 1;
+        rg_inp_triangle <= False;
+        rg_op_triangle <= False;
       end
       else if(rg_w_cntr == params.ofmap_width-1)begin
         rg_w_cntr <= 0;
@@ -170,32 +162,18 @@ package compute_top;
         rg_inp_col_addr <= rg_inp_col_addr + zeroExtend(params.stride_w);
       end
 
-      let req0 = SRAMKRdReq{index: rg_inp_col_addr, valid: rg_inp_triangle /*is_triangle && !lv_pad_zero*/, pad_zero: lv_pad_zero};
-			rg_inp_addr[0] <= req0;
-			wr_inp_addr[0] <= req0;
-		
-			rg_old_out_addr <= rg_old_out_addr + 1;
-			let oreq0 = SRAMKRdReq{index: rg_old_out_addr, valid: rg_op_triangle, pad_zero: ?};
-			rg_old_out_req[0] <= oreq0;
-			wr_old_out_req[0] <= oreq0;
-
-      for(Integer i=1; i<rows; i=i+1)begin
-        let temp = rg_inp_addr[i-1];
-        let index = temp.index;
-        let req = SRAMKRdReq{index: index, valid: temp.valid /*&& (fromInteger(i) < params.active_rows)*/, 
-										pad_zero: temp.pad_zero || (temp.valid && fromInteger(i) >= params.active_rows)};
-				rg_inp_addr[i] <= req;
-				wr_inp_addr[i] <= req;
+      for(Integer i=0; i<rows; i=i+1)begin
+        ff_inp_req[i].enq(SRAMKRdReq{index: rg_inp_col_addr, valid: True,
+                                     pad_zero: lv_pad_zero || fromInteger(i) >= params.active_rows});
       end
 
-			for(Integer i=1; i<cols; i=i+1)begin
-			        let otemp = rg_old_out_req[i-1];
-				let oreq = SRAMKRdReq{index: otemp.index, valid: otemp.valid, 
-										pad_zero: ?};
-				rg_old_out_req[i] <= oreq;
-				wr_old_out_req[i] <= oreq;
-			end
-
+      if(params.preload_output)begin
+        rg_old_out_addr <= rg_old_out_addr + 1;
+        for(Integer j=0; j<cols; j=j+1)begin
+          if(rg_valid_col[j])
+            ff_old_req[j].enq(SRAMKRdReq{index: rg_old_out_addr, valid: True, pad_zero: ?});
+        end
+      end
     endrule
  
     Vector#(nRow, Put#(Bit#(in_width))) ifc_put_input;
@@ -229,7 +207,7 @@ package compute_top;
             let value <- systolic.subifc_cols[i].subifc_get_acc.get();
 						rg_new_out_addr[i] <= rg_new_out_addr[i] + 1;
 						if(fromInteger(i)==validValue(rg_params).active_cols-1)begin
-							rg_new_out_cntr <= rg_new_out_cntr - 1;
+              pw_last_col_out.send();
 						end
             return SRAMKWrReq{index: rg_new_out_addr[i], data: value, valid: rg_which_buffer};
           endmethod
@@ -239,28 +217,13 @@ package compute_top;
 
     Vector#(nCol, Get#(SRAMKRdReq#(of_index))) ifc_get_old_out_addr;
     for(Integer i=0; i<cols; i=i+1)begin
-      ifc_get_old_out_addr[i] = (
-        interface Get;
-          method ActionValue#(SRAMKRdReq#(of_index)) get if(rg_params matches tagged Valid .params &&& params.preload_output &&& rg_valid_col[i]);
-						return wr_old_out_req[i];
-          endmethod
-        endinterface
-      );
+      ifc_get_old_out_addr[i] = toGet(ff_old_req[i]);
     end
 		
-		//TODO - This interface is not properly instantiated in the top. Fix!
+
 		Vector#(nRow, Get#(SRAMKRdReq#(if_index))) ifc_get_inp_addr;
 		for(Integer i=0; i<rows; i=i+1)begin
-			ifc_get_inp_addr[i] = (
-				interface Get;
-					method ActionValue#(SRAMKRdReq#(if_index)) get;
-						//if(wr_inp_addr[i].pad_zero)begin
-						//	systolic.subifc_rows[i].subifc_put_inp.put(0);
-						//end
-						return wr_inp_addr[i];
-					endmethod
-				endinterface
-			);
+      ifc_get_inp_addr[i] = toGet(ff_inp_req[i]);
 		end
 
 		interface get_inp_addr = ifc_get_inp_addr;
@@ -333,13 +296,7 @@ package compute_top;
           rg_valid_row[i] <= fromInteger(i) < params.active_rows;
         end
         
-        for(Integer i=0; i<rows; i=i+1)begin
-          rg_inp_addr[i] <= SRAMKRdReq{index: ?, valid: False, pad_zero: False};
-        end
 
-	for(Integer i=0; i<cols; i=i+1)begin
-          rg_old_out_req[i] <= SRAMKRdReq{index: ?, valid: False, pad_zero: False};
-        end
         
         rg_old_out_addr <= truncate(params.output_address);
         
@@ -350,13 +307,8 @@ package compute_top;
         let time_values = params.ofmap_width * params.ofmap_height;
 
 				$display($time, "Received GEMM params", params.ofmap_width, params.ofmap_height, time_values);
-        if(!params.preload_output)begin
-        //  for(Integer i=0; i<cols; i=i+1)begin
-        //    rg_old_out_cntr[i] <= time_values;
-        //  end
-        //end
-        //else begin
-          rg_zero_cntr <= time_values;
+        for(Integer i=0; i<cols; i=i+1)begin
+          rg_zero_cntr[i] <= (!params.preload_output || fromInteger(i) >= params.active_cols) ? time_values : 0;
         end
 				
 				rg_new_out_cntr <= time_values;
